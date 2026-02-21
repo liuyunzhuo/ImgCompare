@@ -1,0 +1,45 @@
+# Build outputs
+build/
+build-*/
+dist/
+release/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+
+# Qt autogen/moc
+*_autogen/
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# Binaries and libs
+*.exe
+*.dll
+*.obj
+*.o
+*.a
+*.lib
+*.pdb
+
+# IDE and editor
+.idea/
+.vscode/
+*.user
+*.suo
+*.VC.db
+
+# Logs/temp
+*.log
+*.tmp
+*.cache
+
+# Optional local test assets
+samples/*.mp4
+samples/*.yuv
