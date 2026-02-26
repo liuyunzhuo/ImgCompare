@@ -1,6 +1,7 @@
+[CmdletBinding()]
 param(
     [string]$BuildDir = "build-mingw",
-    [string]$QtDir = "C:\Qt\6.10.2\mingw_64",
+    [string]$QtDir = $env:QT_DIR,
     [string]$Generator = "MinGW Makefiles",
     [string]$Config = "Release",
     [switch]$Clean,
@@ -13,19 +14,76 @@ function Add-ToPathIfExists([string]$PathToAdd) {
     if (Test-Path $PathToAdd) {
         if (-not ($env:Path -split ";" | Where-Object { $_ -eq $PathToAdd })) {
             $env:Path = "$PathToAdd;$env:Path"
+            Write-Verbose "Added to PATH: $PathToAdd"
+        } else {
+            Write-Verbose "Already in PATH: $PathToAdd"
         }
+    } else {
+        Write-Verbose "Path does not exist, skipped PATH add: $PathToAdd"
     }
 }
 
-if (-not (Test-Path $QtDir)) {
-    throw "QtDir not found: $QtDir"
+function Resolve-LatestQtMingwDir {
+    $qtBases = @(
+        "C:\Qt",
+        (Join-Path $env:USERPROFILE "Qt")
+    ) | Where-Object { Test-Path $_ }
+
+    foreach ($base in $qtBases) {
+        $versionDirs = Get-ChildItem -Path $base -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^\d+\.\d+\.\d+$' } |
+            Sort-Object { [version]$_.Name } -Descending
+
+        foreach ($versionDir in $versionDirs) {
+            $candidate = Join-Path $versionDir.FullName "mingw_64"
+            if (Test-Path $candidate) {
+                return $candidate
+            }
+        }
+    }
+
+    return $null
 }
+
+if (-not $QtDir) {
+    $QtDir = Resolve-LatestQtMingwDir
+    Write-Verbose "Auto-detected QtDir: $QtDir"
+}
+
+if (-not $QtDir -or -not (Test-Path $QtDir)) {
+    throw "QtDir not found. Set -QtDir explicitly or set QT_DIR environment variable."
+}
+Write-Verbose "Using QtDir: $QtDir"
 
 Add-ToPathIfExists (Join-Path $QtDir "bin")
 
 # Common Qt MinGW toolchain location
 $qtRoot = Split-Path -Parent $QtDir
 $qtHome = Split-Path -Parent $qtRoot
+Write-Verbose "qtRoot: $qtRoot"
+Write-Verbose "qtHome: $qtHome"
+
+# Try adding CMake from Qt Tools if cmake is not already available.
+if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+    $candidateCmakeDirs = @(
+        (Join-Path $qtHome "Tools\CMake_64\bin"),
+        (Join-Path $qtHome "Tools\CMake\bin")
+    )
+    $cmakeDir = $candidateCmakeDirs | Where-Object { Test-Path (Join-Path $_ "cmake.exe") } | Select-Object -First 1
+
+    if (-not $cmakeDir) {
+        $toolsRoot = Join-Path $qtHome "Tools"
+        if (Test-Path $toolsRoot) {
+            $cmakeDir = Get-ChildItem -Path $toolsRoot -Directory -Filter "CMake*" -ErrorAction SilentlyContinue |
+                Sort-Object Name -Descending |
+                ForEach-Object { Join-Path $_.FullName "bin" } |
+                Where-Object { Test-Path (Join-Path $_ "cmake.exe") } |
+                Select-Object -First 1
+        }
+    }
+
+    Add-ToPathIfExists $cmakeDir
+}
 
 $candidateMingwDirs = @(
     (Join-Path $qtHome "Tools\mingw1310_64\bin"),
@@ -47,10 +105,14 @@ if (-not $mingwDir) {
     }
 }
 Add-ToPathIfExists $mingwDir
+Write-Verbose "Using MinGW bin: $mingwDir"
 
 $gccPath = Join-Path $mingwDir "gcc.exe"
 $gxxPath = Join-Path $mingwDir "g++.exe"
 $makePath = Join-Path $mingwDir "mingw32-make.exe"
+Write-Verbose "gccPath: $gccPath"
+Write-Verbose "gxxPath: $gxxPath"
+Write-Verbose "makePath: $makePath"
 
 if (-not (Test-Path $gccPath) -or -not (Test-Path $gxxPath) -or -not (Test-Path $makePath)) {
     throw "Qt MinGW toolchain not found under: $mingwDir"
@@ -59,6 +121,7 @@ if (-not (Test-Path $gccPath) -or -not (Test-Path $gxxPath) -or -not (Test-Path 
 if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
     throw "cmake not found in PATH. Please install CMake and reopen terminal."
 }
+Write-Verbose "cmake: $((Get-Command cmake).Source)"
 
 $cachePath = Join-Path $BuildDir "CMakeCache.txt"
 if ($Clean -and (Test-Path $BuildDir)) {
@@ -80,6 +143,8 @@ if (Test-Path $exePath) {
 }
 
 Write-Host "==> Configure ($BuildDir)"
+Write-Verbose "Generator: $Generator"
+Write-Verbose "Config: $Config"
 cmake -S . -B $BuildDir -G $Generator `
     -DCMAKE_PREFIX_PATH="$QtDir" `
     -DCMAKE_C_COMPILER="$gccPath" `
