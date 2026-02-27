@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ImageLoader.h"
+
 #include <QImage>
 #include <QPointF>
 #include <QWidget>
@@ -13,8 +15,8 @@ class CompareWidget : public QWidget {
 public:
     explicit CompareWidget(QWidget* parent = nullptr);
 
-    void setLeftImage(const QImage& image);
-    void setRightImage(const QImage& image);
+    void setLeftImage(const LoadedImage& image);
+    void setRightImage(const LoadedImage& image);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -26,6 +28,18 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
+    struct PsnrMetrics {
+        bool available = false;
+        int width = 0;
+        int height = 0;
+        double y = 0.0;
+        double u = 0.0;
+        double v = 0.0;
+        bool yInfinite = false;
+        bool uInfinite = false;
+        bool vInfinite = false;
+    };
+
     struct PanBounds {
         qreal minX = 0.0;
         qreal maxX = 0.0;
@@ -39,9 +53,11 @@ private:
     void resetView();
     PanBounds calcPanBounds() const;
     void clampPanOffset();
+    void recomputePsnr();
 
-    QImage m_leftImage;
-    QImage m_rightImage;
+    LoadedImage m_leftImage;
+    LoadedImage m_rightImage;
+    PsnrMetrics m_psnr;
     int m_splitX = -1;
     bool m_dragging = false;
     bool m_panning = false;

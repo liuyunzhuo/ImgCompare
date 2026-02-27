@@ -1,7 +1,8 @@
-﻿#include "ImageLoader.h"
+#include "ImageLoader.h"
 
 #include <QFile>
 #include <QFileInfo>
+#include <QtMath>
 
 namespace {
 int clampToByte(int v) {
@@ -17,6 +18,15 @@ QRgb yuvToRgb(int y, int u, int v) {
     const int g = (298 * c - 100 * d - 208 * e + 128) >> 8;
     const int b = (298 * c + 516 * d + 128) >> 8;
     return qRgb(clampToByte(r), clampToByte(g), clampToByte(b));
+}
+
+void rgbToYuvBt702(int r, int g, int b, int& y, int& u, int& v) {
+    const double yd = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const double ud = -0.114572 * r - 0.385428 * g + 0.500000 * b + 128.0;
+    const double vd = 0.500000 * r - 0.454153 * g - 0.045847 * b + 128.0;
+    y = clampToByte(qRound(yd));
+    u = clampToByte(qRound(ud));
+    v = clampToByte(qRound(vd));
 }
 
 PixelFormat detectFormat(const ImageSource& src) {
@@ -44,7 +54,43 @@ PixelFormat detectFormat(const ImageSource& src) {
     return PixelFormat::PngJpg;
 }
 
-bool loadYuv420p(const QByteArray& raw, int w, int h, QImage& outImage, QString& err) {
+bool buildDisplayImageFromYuv(const YuvPlanes& yuv, QImage& outImage, QString& err) {
+    if (yuv.width <= 0 || yuv.height <= 0) {
+        err = "Invalid YUV size.";
+        return false;
+    }
+
+    const int ySize = yuv.width * yuv.height;
+    const int cW = yuv.subsampling == ChromaSubsampling::Cs444 ? yuv.width : (yuv.width / 2);
+    const int cH = yuv.subsampling == ChromaSubsampling::Cs420 ? (yuv.height / 2) : yuv.height;
+    const int cSize = cW * cH;
+    if (yuv.y.size() < ySize || yuv.u.size() < cSize || yuv.v.size() < cSize) {
+        err = "YUV plane data is incomplete.";
+        return false;
+    }
+
+    const uchar* yPlane = reinterpret_cast<const uchar*>(yuv.y.constData());
+    const uchar* uPlane = reinterpret_cast<const uchar*>(yuv.u.constData());
+    const uchar* vPlane = reinterpret_cast<const uchar*>(yuv.v.constData());
+
+    outImage = QImage(yuv.width, yuv.height, QImage::Format_RGB888);
+    for (int j = 0; j < yuv.height; ++j) {
+        uchar* dst = outImage.scanLine(j);
+        for (int i = 0; i < yuv.width; ++i) {
+            const int yIdx = j * yuv.width + i;
+            const int cx = yuv.subsampling == ChromaSubsampling::Cs444 ? i : (i / 2);
+            const int cy = yuv.subsampling == ChromaSubsampling::Cs420 ? (j / 2) : j;
+            const int cIdx = cy * cW + cx;
+            const QRgb rgb = yuvToRgb(yPlane[yIdx], uPlane[cIdx], vPlane[cIdx]);
+            dst[i * 3 + 0] = qRed(rgb);
+            dst[i * 3 + 1] = qGreen(rgb);
+            dst[i * 3 + 2] = qBlue(rgb);
+        }
+    }
+    return true;
+}
+
+bool loadYuv420p(const QByteArray& raw, int w, int h, LoadedImage& out, QString& err) {
     if (w <= 0 || h <= 0 || (w % 2) != 0 || (h % 2) != 0) {
         err = "YUV420 requires valid even width and height.";
         return false;
@@ -58,27 +104,16 @@ bool loadYuv420p(const QByteArray& raw, int w, int h, QImage& outImage, QString&
         return false;
     }
 
-    const uchar* yPlane = reinterpret_cast<const uchar*>(raw.constData());
-    const uchar* uPlane = yPlane + ySize;
-    const uchar* vPlane = uPlane + uvSize;
-
-    outImage = QImage(w, h, QImage::Format_RGB888);
-    for (int j = 0; j < h; ++j) {
-        uchar* dst = outImage.scanLine(j);
-        for (int i = 0; i < w; ++i) {
-            const int y = yPlane[j * w + i];
-            const int u = uPlane[(j / 2) * (w / 2) + (i / 2)];
-            const int v = vPlane[(j / 2) * (w / 2) + (i / 2)];
-            const QRgb rgb = yuvToRgb(y, u, v);
-            dst[i * 3 + 0] = qRed(rgb);
-            dst[i * 3 + 1] = qGreen(rgb);
-            dst[i * 3 + 2] = qBlue(rgb);
-        }
-    }
-    return true;
+    out.yuv.width = w;
+    out.yuv.height = h;
+    out.yuv.subsampling = ChromaSubsampling::Cs420;
+    out.yuv.y = raw.left(ySize);
+    out.yuv.u = raw.mid(ySize, uvSize);
+    out.yuv.v = raw.mid(ySize + uvSize, uvSize);
+    return buildDisplayImageFromYuv(out.yuv, out.image, err);
 }
 
-bool loadYuv444p(const QByteArray& raw, int w, int h, QImage& outImage, QString& err) {
+bool loadYuv444p(const QByteArray& raw, int w, int h, LoadedImage& out, QString& err) {
     if (w <= 0 || h <= 0) {
         err = "YUV444 requires valid width and height.";
         return false;
@@ -91,110 +126,142 @@ bool loadYuv444p(const QByteArray& raw, int w, int h, QImage& outImage, QString&
         return false;
     }
 
-    const uchar* yPlane = reinterpret_cast<const uchar*>(raw.constData());
-    const uchar* uPlane = yPlane + planeSize;
-    const uchar* vPlane = uPlane + planeSize;
-
-    outImage = QImage(w, h, QImage::Format_RGB888);
-    for (int j = 0; j < h; ++j) {
-        uchar* dst = outImage.scanLine(j);
-        for (int i = 0; i < w; ++i) {
-            const int idx = j * w + i;
-            const QRgb rgb = yuvToRgb(yPlane[idx], uPlane[idx], vPlane[idx]);
-            dst[i * 3 + 0] = qRed(rgb);
-            dst[i * 3 + 1] = qGreen(rgb);
-            dst[i * 3 + 2] = qBlue(rgb);
-        }
-    }
-    return true;
+    out.yuv.width = w;
+    out.yuv.height = h;
+    out.yuv.subsampling = ChromaSubsampling::Cs444;
+    out.yuv.y = raw.left(planeSize);
+    out.yuv.u = raw.mid(planeSize, planeSize);
+    out.yuv.v = raw.mid(planeSize * 2, planeSize);
+    return buildDisplayImageFromYuv(out.yuv, out.image, err);
 }
 
-bool loadNv12(const QByteArray& raw, int w, int h, QImage& outImage, QString& err) {
+bool loadNv12(const QByteArray& raw, int w, int h, LoadedImage& out, QString& err) {
     if (w <= 0 || h <= 0 || (w % 2) != 0 || (h % 2) != 0) {
         err = "NV12 requires valid even width and height.";
         return false;
     }
 
     const int ySize = w * h;
-    const int uvSize = w * (h / 2);
-    const int expected = ySize + uvSize;
+    const int uvInterleavedSize = w * (h / 2);
+    const int uvPlaneSize = (w / 2) * (h / 2);
+    const int expected = ySize + uvInterleavedSize;
     if (raw.size() < expected) {
         err = QString("NV12 file too small, expected at least %1 bytes.").arg(expected);
         return false;
     }
 
-    const uchar* yPlane = reinterpret_cast<const uchar*>(raw.constData());
-    const uchar* uvPlane = yPlane + ySize;
+    out.yuv.width = w;
+    out.yuv.height = h;
+    out.yuv.subsampling = ChromaSubsampling::Cs420;
+    out.yuv.y = raw.left(ySize);
+    out.yuv.u.resize(uvPlaneSize);
+    out.yuv.v.resize(uvPlaneSize);
 
-    outImage = QImage(w, h, QImage::Format_RGB888);
-    for (int j = 0; j < h; ++j) {
-        uchar* dst = outImage.scanLine(j);
-        const int uvRow = (j / 2) * w;
-        for (int i = 0; i < w; ++i) {
-            const int y = yPlane[j * w + i];
-            const int uvIdx = uvRow + (i & ~1);
-            const int u = uvPlane[uvIdx];
-            const int v = uvPlane[uvIdx + 1];
-            const QRgb rgb = yuvToRgb(y, u, v);
-            dst[i * 3 + 0] = qRed(rgb);
-            dst[i * 3 + 1] = qGreen(rgb);
-            dst[i * 3 + 2] = qBlue(rgb);
+    const uchar* uv = reinterpret_cast<const uchar*>(raw.constData() + ySize);
+    uchar* u = reinterpret_cast<uchar*>(out.yuv.u.data());
+    uchar* v = reinterpret_cast<uchar*>(out.yuv.v.data());
+    for (int j = 0; j < h / 2; ++j) {
+        for (int i = 0; i < w / 2; ++i) {
+            const int srcIdx = j * w + i * 2;
+            const int dstIdx = j * (w / 2) + i;
+            u[dstIdx] = uv[srcIdx];
+            v[dstIdx] = uv[srcIdx + 1];
         }
     }
-    return true;
+
+    return buildDisplayImageFromYuv(out.yuv, out.image, err);
 }
 
-bool loadNv16(const QByteArray& raw, int w, int h, QImage& outImage, QString& err) {
+bool loadNv16(const QByteArray& raw, int w, int h, LoadedImage& out, QString& err) {
     if (w <= 0 || h <= 0 || (w % 2) != 0) {
         err = "NV16 requires valid width and height, and width must be even.";
         return false;
     }
 
     const int ySize = w * h;
-    const int uvSize = w * h;
-    const int expected = ySize + uvSize;
+    const int uvInterleavedSize = w * h;
+    const int uvPlaneSize = (w / 2) * h;
+    const int expected = ySize + uvInterleavedSize;
     if (raw.size() < expected) {
         err = QString("NV16 file too small, expected at least %1 bytes.").arg(expected);
         return false;
     }
 
-    const uchar* yPlane = reinterpret_cast<const uchar*>(raw.constData());
-    const uchar* uvPlane = yPlane + ySize;
+    out.yuv.width = w;
+    out.yuv.height = h;
+    out.yuv.subsampling = ChromaSubsampling::Cs422;
+    out.yuv.y = raw.left(ySize);
+    out.yuv.u.resize(uvPlaneSize);
+    out.yuv.v.resize(uvPlaneSize);
 
-    outImage = QImage(w, h, QImage::Format_RGB888);
+    const uchar* uv = reinterpret_cast<const uchar*>(raw.constData() + ySize);
+    uchar* u = reinterpret_cast<uchar*>(out.yuv.u.data());
+    uchar* v = reinterpret_cast<uchar*>(out.yuv.v.data());
     for (int j = 0; j < h; ++j) {
-        uchar* dst = outImage.scanLine(j);
-        const int uvRow = j * w;
-        for (int i = 0; i < w; ++i) {
-            const int y = yPlane[j * w + i];
-            const int uvIdx = uvRow + (i & ~1);
-            const int u = uvPlane[uvIdx];
-            const int v = uvPlane[uvIdx + 1];
-            const QRgb rgb = yuvToRgb(y, u, v);
-            dst[i * 3 + 0] = qRed(rgb);
-            dst[i * 3 + 1] = qGreen(rgb);
-            dst[i * 3 + 2] = qBlue(rgb);
+        for (int i = 0; i < w / 2; ++i) {
+            const int srcIdx = j * w + i * 2;
+            const int dstIdx = j * (w / 2) + i;
+            u[dstIdx] = uv[srcIdx];
+            v[dstIdx] = uv[srcIdx + 1];
         }
     }
+
+    return buildDisplayImageFromYuv(out.yuv, out.image, err);
+}
+
+bool loadRgbAndConvertToBt702Yuv(const QString& path, LoadedImage& out, QString& err) {
+    QImage img(path);
+    if (img.isNull()) {
+        err = "Failed to read image. Check file path and format.";
+        return false;
+    }
+
+    out.image = img.convertToFormat(QImage::Format_RGB888);
+    out.yuv.width = out.image.width();
+    out.yuv.height = out.image.height();
+    out.yuv.subsampling = ChromaSubsampling::Cs444;
+
+    const int size = out.yuv.width * out.yuv.height;
+    out.yuv.y.resize(size);
+    out.yuv.u.resize(size);
+    out.yuv.v.resize(size);
+
+    uchar* yPlane = reinterpret_cast<uchar*>(out.yuv.y.data());
+    uchar* uPlane = reinterpret_cast<uchar*>(out.yuv.u.data());
+    uchar* vPlane = reinterpret_cast<uchar*>(out.yuv.v.data());
+
+    for (int j = 0; j < out.image.height(); ++j) {
+        const uchar* row = out.image.constScanLine(j);
+        for (int i = 0; i < out.image.width(); ++i) {
+            const int idx = j * out.image.width() + i;
+            const int base = i * 3;
+            int y = 0;
+            int u = 0;
+            int v = 0;
+            rgbToYuvBt702(row[base], row[base + 1], row[base + 2], y, u, v);
+            yPlane[idx] = static_cast<uchar>(y);
+            uPlane[idx] = static_cast<uchar>(u);
+            vPlane[idx] = static_cast<uchar>(v);
+        }
+    }
+
     return true;
 }
 } // namespace
 
-bool ImageLoader::load(const ImageSource& src, QImage& outImage, QString& err) {
+bool ImageLoader::load(const ImageSource& src, LoadedImage& out, QString& err) {
+    out = LoadedImage{};
+
     if (src.path.isEmpty()) {
         err = "Empty path.";
         return false;
     }
 
     const PixelFormat fmt = detectFormat(src);
+    out.format = fmt;
+
     if (fmt == PixelFormat::PngJpg) {
-        QImage img(src.path);
-        if (img.isNull()) {
-            err = "Failed to read image. Check file path and format.";
-            return false;
-        }
-        outImage = img.convertToFormat(QImage::Format_RGB888);
-        return true;
+        return loadRgbAndConvertToBt702Yuv(src.path, out, err);
     }
 
     QFile file(src.path);
@@ -202,18 +269,17 @@ bool ImageLoader::load(const ImageSource& src, QImage& outImage, QString& err) {
         err = QString("Failed to open file: %1").arg(src.path);
         return false;
     }
-
     const QByteArray raw = file.readAll();
 
     switch (fmt) {
     case PixelFormat::YUV420P:
-        return loadYuv420p(raw, src.width, src.height, outImage, err);
+        return loadYuv420p(raw, src.width, src.height, out, err);
     case PixelFormat::YUV444P:
-        return loadYuv444p(raw, src.width, src.height, outImage, err);
+        return loadYuv444p(raw, src.width, src.height, out, err);
     case PixelFormat::NV12:
-        return loadNv12(raw, src.width, src.height, outImage, err);
+        return loadNv12(raw, src.width, src.height, out, err);
     case PixelFormat::NV16:
-        return loadNv16(raw, src.width, src.height, outImage, err);
+        return loadNv16(raw, src.width, src.height, out, err);
     case PixelFormat::Auto:
     case PixelFormat::PngJpg:
         break;

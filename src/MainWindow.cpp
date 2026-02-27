@@ -199,7 +199,7 @@ bool MainWindow::loadImageFromPath(const QString& path, bool left, bool showErro
         m_rightPath = path;
     }
 
-    QImage img;
+    LoadedImage img;
     QString err;
     if (!ImageLoader::load(collectSource(left), img, err)) {
         if (showError) {
