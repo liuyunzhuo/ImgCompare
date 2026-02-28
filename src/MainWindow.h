@@ -10,6 +10,8 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+class QAction;
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
@@ -40,6 +42,9 @@ private:
     QSpinBox* m_rightW = nullptr;
     QSpinBox* m_rightH = nullptr;
     QWidget* m_controlPanel = nullptr;
+    QAction* m_showPixelInfoAction = nullptr;
+    QAction* m_showPixelDiffAction = nullptr;
+    QAction* m_showPsnrAction = nullptr;
     QString m_leftPath;
     QString m_rightPath;
 };

@@ -1,10 +1,12 @@
-﻿#include "MainWindow.h"
+#include "MainWindow.h"
 
+#include <QAction>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QMenuBar>
 #include <QPushButton>
 #include <QShortcut>
 #include <QUrl>
@@ -80,6 +82,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_rootLayout->addWidget(m_controlPanel);
     m_rootLayout->addWidget(m_compareWidget, 1);
     setCentralWidget(central);
+
+    auto* viewMenu = menuBar()->addMenu("View");
+    m_showPixelInfoAction = viewMenu->addAction("Show Pixel Info");
+    m_showPixelInfoAction->setCheckable(true);
+    m_showPixelInfoAction->setChecked(true);
+    m_showPixelDiffAction = viewMenu->addAction("Show Pixel Diff");
+    m_showPixelDiffAction->setCheckable(true);
+    m_showPixelDiffAction->setChecked(true);
+    m_showPsnrAction = viewMenu->addAction("Show PSNR");
+    m_showPsnrAction->setCheckable(true);
+    m_showPsnrAction->setChecked(true);
+
+    connect(m_showPixelInfoAction, &QAction::toggled, m_compareWidget, &CompareWidget::setShowPixelInfo);
+    connect(m_showPixelDiffAction, &QAction::toggled, m_compareWidget, &CompareWidget::setShowPixelDiff);
+    connect(m_showPsnrAction, &QAction::toggled, m_compareWidget, &CompareWidget::setShowPsnr);
 
     connect(leftLoadBtn, &QPushButton::clicked, this, &MainWindow::loadLeftImage);
     connect(rightLoadBtn, &QPushButton::clicked, this, &MainWindow::loadRightImage);
@@ -268,3 +285,5 @@ void MainWindow::dropEvent(QDropEvent* event) {
 
     event->acceptProposedAction();
 }
+
+

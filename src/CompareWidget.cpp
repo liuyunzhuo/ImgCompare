@@ -1,5 +1,7 @@
 #include "CompareWidget.h"
 
+#include <QEvent>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QWheelEvent>
@@ -53,11 +55,13 @@ inline int samplePlaneMapped(const QByteArray& plane,
 CompareWidget::CompareWidget(QWidget* parent) : QWidget(parent) {
     setMouseTracking(true);
     setMinimumSize(640, 360);
+    setFocusPolicy(Qt::StrongFocus);
 }
 
 void CompareWidget::setLeftImage(const LoadedImage& image) {
     m_leftImage = image;
     recomputePsnr();
+    m_cursorSample.valid = false;
     clampPanOffset();
     update();
 }
@@ -65,7 +69,35 @@ void CompareWidget::setLeftImage(const LoadedImage& image) {
 void CompareWidget::setRightImage(const LoadedImage& image) {
     m_rightImage = image;
     recomputePsnr();
+    m_cursorSample.valid = false;
     clampPanOffset();
+    update();
+}
+
+void CompareWidget::setShowPixelInfo(bool enabled) {
+    if (m_showPixelInfo == enabled) {
+        return;
+    }
+    m_showPixelInfo = enabled;
+    if (!m_showPixelInfo) {
+        m_cursorSample.valid = false;
+    }
+    update();
+}
+
+void CompareWidget::setShowPsnr(bool enabled) {
+    if (m_showPsnr == enabled) {
+        return;
+    }
+    m_showPsnr = enabled;
+    update();
+}
+
+void CompareWidget::setShowPixelDiff(bool enabled) {
+    if (m_showPixelDiff == enabled) {
+        return;
+    }
+    m_showPixelDiff = enabled;
     update();
 }
 
@@ -132,7 +164,8 @@ void CompareWidget::paintEvent(QPaintEvent*) {
     p.drawLine(handleRect.center().x() + 4, handleRect.center().y() - 8,
                handleRect.center().x() + 4, handleRect.center().y() + 8);
 
-    if (m_psnr.available) {
+    int topOffset = 12;
+    if (m_showPsnr && m_psnr.available) {
         const bool fullscreen = window() && window()->isFullScreen();
         const auto formatValue = [](double val, bool inf) -> QString {
             if (inf) {
@@ -156,7 +189,7 @@ void CompareWidget::paintEvent(QPaintEvent*) {
             Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
             text);
         const QRect panelRect(width() - textRect.width() - padding * 2 - 12,
-                              12,
+                              topOffset,
                               textRect.width() + padding * 2,
                               textRect.height() + padding * 2);
 
@@ -168,10 +201,95 @@ void CompareWidget::paintEvent(QPaintEvent*) {
         p.drawText(panelRect.adjusted(padding, padding, -padding, -padding),
                    Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
                    text);
+        topOffset = panelRect.bottom() + 10;
+    }
+
+    if (m_showPixelInfo && m_cursorSample.valid) {
+        QString text = QString("Anchor: %1 (%2, %3)")
+                           .arg(m_cursorSample.anchorLeftSide ? "Left" : "Right")
+                           .arg(m_cursorSample.anchorX)
+                           .arg(m_cursorSample.anchorY);
+        if (m_cursorSample.leftValid) {
+            text += QString("\nL (%1, %2)  Y:%3 U:%4 V:%5")
+                        .arg(m_cursorSample.leftX)
+                        .arg(m_cursorSample.leftY)
+                        .arg(m_cursorSample.leftYVal)
+                        .arg(m_cursorSample.leftUVal)
+                        .arg(m_cursorSample.leftVVal);
+        } else {
+            text += "\nL: N/A";
+        }
+        if (m_cursorSample.rightValid) {
+            text += QString("\nR (%1, %2)  Y:%3 U:%4 V:%5")
+                        .arg(m_cursorSample.rightX)
+                        .arg(m_cursorSample.rightY)
+                        .arg(m_cursorSample.rightYVal)
+                        .arg(m_cursorSample.rightUVal)
+                        .arg(m_cursorSample.rightVVal);
+        } else {
+            text += "\nR: N/A";
+        }
+        if (m_showPixelDiff && m_cursorSample.leftValid && m_cursorSample.rightValid) {
+            text += QString("\nDiff(YUV): dY=%1 dU=%2 dV=%3")
+                        .arg(m_cursorSample.leftYVal - m_cursorSample.rightYVal)
+                        .arg(m_cursorSample.leftUVal - m_cursorSample.rightUVal)
+                        .arg(m_cursorSample.leftVVal - m_cursorSample.rightVVal);
+        }
+
+        const int padding = 10;
+        const QRect textRect = p.fontMetrics().boundingRect(
+            QRect(0, 0, width(), height()),
+            Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+            text);
+        const QRect panelRect(width() - textRect.width() - padding * 2 - 12,
+                              topOffset,
+                              textRect.width() + padding * 2,
+                              textRect.height() + padding * 2);
+
+        p.setBrush(QColor(0, 0, 0, 140));
+        p.setPen(Qt::NoPen);
+        p.drawRoundedRect(panelRect, 8, 8);
+        p.setPen(QColor(245, 245, 245, 230));
+        p.drawText(panelRect.adjusted(padding, padding, -padding, -padding),
+                   Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+                   text);
+
+        const auto drawPixelBox = [&](const LoadedImage& image, int px, int py, bool leftSide, bool anchorSide) {
+            if (image.image.isNull()) {
+                return;
+            }
+            const QRectF target = imageTargetRect(image.image);
+            const qreal pixelW = target.width() / image.yuv.width;
+            const qreal pixelH = target.height() / image.yuv.height;
+            if (pixelW < 6.0 || pixelH < 6.0) {
+                return;
+            }
+            const QRectF pixelRect(target.left() + px * pixelW,
+                                   target.top() + py * pixelH,
+                                   pixelW,
+                                   pixelH);
+            p.save();
+            if (leftSide) {
+                p.setClipRect(QRect(0, 0, m_splitX, height()));
+            } else {
+                p.setClipRect(QRect(m_splitX, 0, width() - m_splitX, height()));
+            }
+            p.setPen(QPen(QColor(255, 255, 255, anchorSide ? 250 : 210), anchorSide ? 1.8 : 1.2));
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(pixelRect);
+            p.restore();
+        };
+        if (m_cursorSample.leftValid) {
+            drawPixelBox(m_leftImage, m_cursorSample.leftX, m_cursorSample.leftY, true, m_cursorSample.anchorLeftSide);
+        }
+        if (m_cursorSample.rightValid) {
+            drawPixelBox(m_rightImage, m_cursorSample.rightX, m_cursorSample.rightY, false, !m_cursorSample.anchorLeftSide);
+        }
     }
 }
 
 void CompareWidget::mousePressEvent(QMouseEvent* event) {
+    setFocus(Qt::MouseFocusReason);
     if (event->button() == Qt::RightButton || event->button() == Qt::MiddleButton) {
         m_panning = true;
         m_lastPanPos = event->pos();
@@ -190,6 +308,7 @@ void CompareWidget::mousePressEvent(QMouseEvent* event) {
 }
 
 void CompareWidget::mouseMoveEvent(QMouseEvent* event) {
+    setFocus(Qt::MouseFocusReason);
     if (m_panning) {
         const QPoint delta = event->pos() - m_lastPanPos;
         m_lastPanPos = event->pos();
@@ -210,6 +329,8 @@ void CompareWidget::mouseMoveEvent(QMouseEvent* event) {
     } else {
         unsetCursor();
     }
+
+    updateCursorSample(event->pos());
     QWidget::mouseMoveEvent(event);
 }
 
@@ -260,6 +381,42 @@ void CompareWidget::resizeEvent(QResizeEvent* event) {
     }
     clampPanOffset();
     QWidget::resizeEvent(event);
+}
+
+void CompareWidget::leaveEvent(QEvent* event) {
+    m_cursorSample.valid = false;
+    update();
+    QWidget::leaveEvent(event);
+}
+
+void CompareWidget::keyPressEvent(QKeyEvent* event) {
+    if (!m_showPixelInfo || !m_cursorSample.valid) {
+        QWidget::keyPressEvent(event);
+        return;
+    }
+
+    int dx = 0;
+    int dy = 0;
+    switch (event->key()) {
+    case Qt::Key_W:
+        dy = -1;
+        break;
+    case Qt::Key_S:
+        dy = 1;
+        break;
+    case Qt::Key_A:
+        dx = -1;
+        break;
+    case Qt::Key_D:
+        dx = 1;
+        break;
+    default:
+        QWidget::keyPressEvent(event);
+        return;
+    }
+
+    moveCursorSampleBy(dx, dy);
+    event->accept();
 }
 
 void CompareWidget::resetView() {
@@ -430,4 +587,138 @@ void CompareWidget::recomputePsnr() {
     m_psnr.y = m_psnr.yInfinite ? 0.0 : psnrFromMse(mseY);
     m_psnr.u = m_psnr.uInfinite ? 0.0 : psnrFromMse(mseU);
     m_psnr.v = m_psnr.vInfinite ? 0.0 : psnrFromMse(mseV);
+}
+
+void CompareWidget::updateCursorSample(const QPoint& pos) {
+    if (!m_showPixelInfo) {
+        return;
+    }
+
+    CursorSample sample;
+    if (sampleAtWidgetPos(m_leftImage, pos, true, sample) || sampleAtWidgetPos(m_rightImage, pos, false, sample)) {
+        m_cursorSample.valid = true;
+        m_cursorSample.anchorLeftSide = sample.anchorLeftSide;
+        m_cursorSample.anchorX = sample.anchorX;
+        m_cursorSample.anchorY = sample.anchorY;
+        rebuildCursorSampleFromAnchor();
+    } else {
+        m_cursorSample.valid = false;
+    }
+    update();
+}
+
+bool CompareWidget::sampleAtWidgetPos(const LoadedImage& image, const QPoint& pos, bool leftSide, CursorSample& out) const {
+    if (image.image.isNull()) {
+        return false;
+    }
+    if (leftSide && pos.x() > m_splitX) {
+        return false;
+    }
+    if (!leftSide && pos.x() < m_splitX) {
+        return false;
+    }
+
+    const QRectF target = imageTargetRect(image.image);
+    if (!target.contains(pos)) {
+        return false;
+    }
+    if (!isValidYuv(image.yuv)) {
+        return false;
+    }
+
+    const int x = qBound(0, static_cast<int>((pos.x() - target.left()) * image.yuv.width / target.width()), image.yuv.width - 1);
+    const int y = qBound(0, static_cast<int>((pos.y() - target.top()) * image.yuv.height / target.height()), image.yuv.height - 1);
+    out.valid = true;
+    out.anchorLeftSide = leftSide;
+    out.anchorX = x;
+    out.anchorY = y;
+    return true;
+}
+
+bool CompareWidget::sampleAtImagePos(const LoadedImage& image, int x, int y, bool leftSide, CursorSample& out) const {
+    if (!isValidYuv(image.yuv)) {
+        return false;
+    }
+    x = qBound(0, x, image.yuv.width - 1);
+    y = qBound(0, y, image.yuv.height - 1);
+    const int yIdx = y * image.yuv.width + x;
+    const int cW = chromaWidth(image.yuv);
+    const int cH = chromaHeight(image.yuv);
+    const int cx = image.yuv.subsampling == ChromaSubsampling::Cs444 ? x : (x / 2);
+    const int cy = image.yuv.subsampling == ChromaSubsampling::Cs420 ? (y / 2) : y;
+    const int cIdx = qBound(0, cy * cW + cx, cW * cH - 1);
+
+    out.valid = true;
+    if (leftSide) {
+        out.leftValid = true;
+        out.leftX = x;
+        out.leftY = y;
+        out.leftYVal = static_cast<int>(static_cast<unsigned char>(image.yuv.y[yIdx]));
+        out.leftUVal = static_cast<int>(static_cast<unsigned char>(image.yuv.u[cIdx]));
+        out.leftVVal = static_cast<int>(static_cast<unsigned char>(image.yuv.v[cIdx]));
+    } else {
+        out.rightValid = true;
+        out.rightX = x;
+        out.rightY = y;
+        out.rightYVal = static_cast<int>(static_cast<unsigned char>(image.yuv.y[yIdx]));
+        out.rightUVal = static_cast<int>(static_cast<unsigned char>(image.yuv.u[cIdx]));
+        out.rightVVal = static_cast<int>(static_cast<unsigned char>(image.yuv.v[cIdx]));
+    }
+    return true;
+}
+
+void CompareWidget::rebuildCursorSampleFromAnchor() {
+    if (!m_cursorSample.valid) {
+        return;
+    }
+
+    CursorSample rebuilt;
+    rebuilt.valid = true;
+    rebuilt.anchorLeftSide = m_cursorSample.anchorLeftSide;
+    rebuilt.anchorX = m_cursorSample.anchorX;
+    rebuilt.anchorY = m_cursorSample.anchorY;
+
+    if (m_cursorSample.anchorLeftSide) {
+        if (isValidYuv(m_leftImage.yuv)) {
+            sampleAtImagePos(m_leftImage, m_cursorSample.anchorX, m_cursorSample.anchorY, true, rebuilt);
+        }
+        if (isValidYuv(m_rightImage.yuv) && isValidYuv(m_leftImage.yuv)) {
+            const int rx = (m_leftImage.yuv.width > 1 && m_rightImage.yuv.width > 1)
+                               ? qRound((static_cast<double>(m_cursorSample.anchorX) * (m_rightImage.yuv.width - 1)) / (m_leftImage.yuv.width - 1))
+                               : 0;
+            const int ry = (m_leftImage.yuv.height > 1 && m_rightImage.yuv.height > 1)
+                               ? qRound((static_cast<double>(m_cursorSample.anchorY) * (m_rightImage.yuv.height - 1)) / (m_leftImage.yuv.height - 1))
+                               : 0;
+            sampleAtImagePos(m_rightImage, rx, ry, false, rebuilt);
+        }
+    } else {
+        if (isValidYuv(m_rightImage.yuv)) {
+            sampleAtImagePos(m_rightImage, m_cursorSample.anchorX, m_cursorSample.anchorY, false, rebuilt);
+        }
+        if (isValidYuv(m_leftImage.yuv) && isValidYuv(m_rightImage.yuv)) {
+            const int lx = (m_rightImage.yuv.width > 1 && m_leftImage.yuv.width > 1)
+                               ? qRound((static_cast<double>(m_cursorSample.anchorX) * (m_leftImage.yuv.width - 1)) / (m_rightImage.yuv.width - 1))
+                               : 0;
+            const int ly = (m_rightImage.yuv.height > 1 && m_leftImage.yuv.height > 1)
+                               ? qRound((static_cast<double>(m_cursorSample.anchorY) * (m_leftImage.yuv.height - 1)) / (m_rightImage.yuv.height - 1))
+                               : 0;
+            sampleAtImagePos(m_leftImage, lx, ly, true, rebuilt);
+        }
+    }
+
+    m_cursorSample = rebuilt;
+}
+
+void CompareWidget::moveCursorSampleBy(int dx, int dy) {
+    if (!m_cursorSample.valid) {
+        return;
+    }
+    const LoadedImage& anchorImg = m_cursorSample.anchorLeftSide ? m_leftImage : m_rightImage;
+    if (!isValidYuv(anchorImg.yuv)) {
+        return;
+    }
+    m_cursorSample.anchorX = qBound(0, m_cursorSample.anchorX + dx, anchorImg.yuv.width - 1);
+    m_cursorSample.anchorY = qBound(0, m_cursorSample.anchorY + dy, anchorImg.yuv.height - 1);
+    rebuildCursorSampleFromAnchor();
+    update();
 }
