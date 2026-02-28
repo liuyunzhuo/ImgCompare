@@ -2,6 +2,7 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QtMath>
 
 namespace {
@@ -10,13 +11,14 @@ int clampToByte(int v) {
 }
 
 QRgb yuvToRgb(int y, int u, int v) {
-    const int c = y - 16;
-    const int d = u - 128;
-    const int e = v - 128;
+    // Inverse of rgbToYuvBt702() in full-range BT.702/709-style transform.
+    const double yd = static_cast<double>(y);
+    const double ud = static_cast<double>(u) - 128.0;
+    const double vd = static_cast<double>(v) - 128.0;
 
-    const int r = (298 * c + 409 * e + 128) >> 8;
-    const int g = (298 * c - 100 * d - 208 * e + 128) >> 8;
-    const int b = (298 * c + 516 * d + 128) >> 8;
+    const int r = qRound(yd + 1.574800 * vd);
+    const int g = qRound(yd - 0.187324 * ud - 0.468124 * vd);
+    const int b = qRound(yd + 1.855600 * ud);
     return qRgb(clampToByte(r), clampToByte(g), clampToByte(b));
 }
 
@@ -34,7 +36,32 @@ PixelFormat detectFormat(const ImageSource& src) {
         return src.format;
     }
 
-    const QString ext = QFileInfo(src.path).suffix().toLower();
+    const QFileInfo fi(src.path);
+    const QString ext = fi.suffix().toLower();
+    const QString base = fi.completeBaseName().toLower();
+    const QString fileName = fi.fileName().toLower();
+
+    const auto nameHas = [&](const QString& token) {
+        return base.contains(token) || fileName.contains(token);
+    };
+
+    const auto nameMatch = [&](const QString& pattern) {
+        return QRegularExpression(pattern, QRegularExpression::CaseInsensitiveOption).match(fileName).hasMatch();
+    };
+
+    if (nameHas("_nv12") || nameHas(".nv12")) {
+        return PixelFormat::NV12;
+    }
+    if (nameHas("_nv16") || nameHas(".nv16")) {
+        return PixelFormat::NV16;
+    }
+    if (nameHas("_i420p") || nameHas("_420p") || nameHas("_i420") || nameMatch("(^|[_\\-.])420($|[_\\-.])")) {
+        return PixelFormat::YUV420P;
+    }
+    if (nameHas("_i444p") || nameHas("_444p") || nameHas("_i444") || nameMatch("(^|[_\\-.])444($|[_\\-.])")) {
+        return PixelFormat::YUV444P;
+    }
+
     if (ext == "png" || ext == "jpg" || ext == "jpeg") {
         return PixelFormat::PngJpg;
     }
@@ -43,6 +70,10 @@ PixelFormat detectFormat(const ImageSource& src) {
     }
     if (ext == "yuv444") {
         return PixelFormat::YUV444P;
+    }
+    if (ext == "yuv") {
+        // Generic .yuv without naming hint: default to 420 for compatibility.
+        return PixelFormat::YUV420P;
     }
     if (ext == "nv12") {
         return PixelFormat::NV12;
@@ -247,6 +278,25 @@ bool loadRgbAndConvertToBt702Yuv(const QString& path, LoadedImage& out, QString&
 
     return true;
 }
+
+bool parseResolutionFromFileName(const QString& path, int& outW, int& outH) {
+    const QString name = QFileInfo(path).fileName();
+    const QRegularExpression re("(\\d{2,5})\\s*[xX]\\s*(\\d{2,5})");
+    const QRegularExpressionMatch m = re.match(name);
+    if (!m.hasMatch()) {
+        return false;
+    }
+    bool okW = false;
+    bool okH = false;
+    const int w = m.captured(1).toInt(&okW);
+    const int h = m.captured(2).toInt(&okH);
+    if (!okW || !okH || w <= 0 || h <= 0) {
+        return false;
+    }
+    outW = w;
+    outH = h;
+    return true;
+}
 } // namespace
 
 bool ImageLoader::load(const ImageSource& src, LoadedImage& out, QString& err) {
@@ -264,6 +314,17 @@ bool ImageLoader::load(const ImageSource& src, LoadedImage& out, QString& err) {
         return loadRgbAndConvertToBt702Yuv(src.path, out, err);
     }
 
+    int width = src.width;
+    int height = src.height;
+    if (src.format == PixelFormat::Auto) {
+        int parsedW = 0;
+        int parsedH = 0;
+        if (parseResolutionFromFileName(src.path, parsedW, parsedH)) {
+            width = parsedW;
+            height = parsedH;
+        }
+    }
+
     QFile file(src.path);
     if (!file.open(QIODevice::ReadOnly)) {
         err = QString("Failed to open file: %1").arg(src.path);
@@ -273,13 +334,13 @@ bool ImageLoader::load(const ImageSource& src, LoadedImage& out, QString& err) {
 
     switch (fmt) {
     case PixelFormat::YUV420P:
-        return loadYuv420p(raw, src.width, src.height, out, err);
+        return loadYuv420p(raw, width, height, out, err);
     case PixelFormat::YUV444P:
-        return loadYuv444p(raw, src.width, src.height, out, err);
+        return loadYuv444p(raw, width, height, out, err);
     case PixelFormat::NV12:
-        return loadNv12(raw, src.width, src.height, out, err);
+        return loadNv12(raw, width, height, out, err);
     case PixelFormat::NV16:
-        return loadNv16(raw, src.width, src.height, out, err);
+        return loadNv16(raw, width, height, out, err);
     case PixelFormat::Auto:
     case PixelFormat::PngJpg:
         break;

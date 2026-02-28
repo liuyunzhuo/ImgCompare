@@ -24,6 +24,8 @@ protected:
 private slots:
     void loadLeftImage();
     void loadRightImage();
+    void saveLeftImage();
+    void saveRightImage();
     void toggleFullscreen();
 
 private:
@@ -31,6 +33,7 @@ private:
     static PixelFormat comboToFormat(const QComboBox* combo);
     void applyFullscreenUi(bool fullscreen);
     bool loadImageFromPath(const QString& path, bool left, bool showError = true);
+    bool saveImageToPath(const QString& path, bool left, bool showError = true);
 
     CompareWidget* m_compareWidget = nullptr;
     QVBoxLayout* m_rootLayout = nullptr;
@@ -45,6 +48,8 @@ private:
     QAction* m_showPixelInfoAction = nullptr;
     QAction* m_showPixelDiffAction = nullptr;
     QAction* m_showPsnrAction = nullptr;
+    LoadedImage m_leftImageData;
+    LoadedImage m_rightImageData;
     QString m_leftPath;
     QString m_rightPath;
 };
