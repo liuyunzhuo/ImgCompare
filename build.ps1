@@ -10,6 +10,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Default behavior: enable Clean/Deploy unless explicitly set by caller.
+if (-not $PSBoundParameters.ContainsKey("Clean")) {
+    $Clean = $true
+}
+if (-not $PSBoundParameters.ContainsKey("Deploy")) {
+    $Deploy = $true
+}
+
 function Add-ToPathIfExists([string]$PathToAdd) {
     if (Test-Path $PathToAdd) {
         if (-not ($env:Path -split ";" | Where-Object { $_ -eq $PathToAdd })) {

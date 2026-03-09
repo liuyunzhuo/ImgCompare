@@ -22,6 +22,7 @@ public:
     void setShowPixelInfo(bool enabled);
     void setShowPsnr(bool enabled);
     void setShowPixelDiff(bool enabled);
+    bool isLeftSideAt(const QPoint& pos) const;
 
 protected:
     void paintEvent(QPaintEvent* event) override;

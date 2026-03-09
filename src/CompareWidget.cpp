@@ -101,6 +101,11 @@ void CompareWidget::setShowPixelDiff(bool enabled) {
     update();
 }
 
+bool CompareWidget::isLeftSideAt(const QPoint& pos) const {
+    const int split = (m_splitX < 0) ? (width() / 2) : m_splitX;
+    return pos.x() < split;
+}
+
 QRectF CompareWidget::imageTargetRect(const QImage& image) const {
     if (image.isNull()) {
         return rect();

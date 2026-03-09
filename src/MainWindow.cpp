@@ -670,7 +670,9 @@ void MainWindow::dropEvent(QDropEvent* event) {
         loadImageFromPath(files.at(0), true);
         loadImageFromPath(files.at(1), false);
     } else {
-        const bool toLeft = event->position().x() < (width() / 2.0);
+        const QPoint globalDropPos = mapToGlobal(event->position().toPoint());
+        const QPoint dropPosInCompare = m_compareWidget->mapFromGlobal(globalDropPos);
+        const bool toLeft = m_compareWidget->isLeftSideAt(dropPosInCompare);
         loadImageFromPath(files.first(), toLeft);
     }
 
