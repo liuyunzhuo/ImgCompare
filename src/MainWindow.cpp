@@ -217,10 +217,10 @@ SaveYuvFormat detectSaveYuvFormatFromName(const QString& path) {
         return base.contains(token) || fileName.contains(token);
     };
 
-    if (ext == "yuv444" || nameHas("_i444p") || nameHas("_444p") || nameHas("_i444")) {
+    if (ext == "yuv444" || nameHas("_i444p") || nameHas("_444p") || nameHas("_i444") || nameHas("yuv444p")) {
         return SaveYuvFormat::Yuv444;
     }
-    if (ext == "yuv420" || ext == "i420" || nameHas("_i420p") || nameHas("_420p") || nameHas("_i420")) {
+    if (ext == "yuv420" || ext == "i420" || nameHas("_i420p") || nameHas("_420p") || nameHas("_i420") || nameHas("yuv420p")) {
         return SaveYuvFormat::Yuv420;
     }
     if (ext == "nv12" || nameHas("_nv12")) {

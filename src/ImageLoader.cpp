@@ -55,10 +55,12 @@ PixelFormat detectFormat(const ImageSource& src) {
     if (nameHas("_nv16") || nameHas(".nv16")) {
         return PixelFormat::NV16;
     }
-    if (nameHas("_i420p") || nameHas("_420p") || nameHas("_i420") || nameMatch("(^|[_\\-.])420($|[_\\-.])")) {
+    if (nameHas("_i420p") || nameHas("_420p") || nameHas("_i420") || nameHas("yuv420p")
+        || nameMatch("(^|[_\\-.])420($|[_\\-.])")) {
         return PixelFormat::YUV420P;
     }
-    if (nameHas("_i444p") || nameHas("_444p") || nameHas("_i444") || nameMatch("(^|[_\\-.])444($|[_\\-.])")) {
+    if (nameHas("_i444p") || nameHas("_444p") || nameHas("_i444") || nameHas("yuv444p")
+        || nameMatch("(^|[_\\-.])444($|[_\\-.])")) {
         return PixelFormat::YUV444P;
     }
 
