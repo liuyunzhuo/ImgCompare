@@ -36,6 +36,13 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
+    enum class ChannelView {
+        Color,
+        Y,
+        U,
+        V
+    };
+
     struct PsnrMetrics {
         bool available = false;
         int width = 0;
@@ -88,6 +95,11 @@ private:
     bool sampleAtImagePos(const LoadedImage& image, int x, int y, bool leftSide, CursorSample& out) const;
     void rebuildCursorSampleFromAnchor();
     void moveCursorSampleBy(int dx, int dy);
+    QImage channelImage(const LoadedImage& image, ChannelView view) const;
+    void invalidateChannelCache();
+    void ensureChannelCache();
+    QString channelViewLabel() const;
+    void cycleChannelView(bool forward);
 
     LoadedImage m_leftImage;
     LoadedImage m_rightImage;
@@ -102,4 +114,9 @@ private:
     QPoint m_lastPanPos;
     double m_zoom = 1.0;
     QPointF m_panOffset{0.0, 0.0};
+    ChannelView m_channelView = ChannelView::Color;
+    ChannelView m_cachedChannelView = ChannelView::Color;
+    bool m_channelCacheValid = false;
+    QImage m_leftChannelCache;
+    QImage m_rightChannelCache;
 };

@@ -60,6 +60,7 @@ CompareWidget::CompareWidget(QWidget* parent) : QWidget(parent) {
 
 void CompareWidget::setLeftImage(const LoadedImage& image) {
     m_leftImage = image;
+    invalidateChannelCache();
     recomputePsnr();
     m_cursorSample.valid = false;
     clampPanOffset();
@@ -68,6 +69,7 @@ void CompareWidget::setLeftImage(const LoadedImage& image) {
 
 void CompareWidget::setRightImage(const LoadedImage& image) {
     m_rightImage = image;
+    invalidateChannelCache();
     recomputePsnr();
     m_cursorSample.valid = false;
     clampPanOffset();
@@ -138,19 +140,23 @@ void CompareWidget::paintEvent(QPaintEvent*) {
         m_splitX = width() / 2;
     }
 
-    if (!m_leftImage.image.isNull()) {
-        const QRectF target = imageTargetRect(m_leftImage.image);
+    ensureChannelCache();
+    const QImage& leftDisplay = (m_channelView == ChannelView::Color) ? m_leftImage.image : m_leftChannelCache;
+    const QImage& rightDisplay = (m_channelView == ChannelView::Color) ? m_rightImage.image : m_rightChannelCache;
+
+    if (!leftDisplay.isNull()) {
+        const QRectF target = imageTargetRect(leftDisplay);
         p.save();
         p.setClipRect(QRect(0, 0, m_splitX, height()));
-        p.drawImage(target, m_leftImage.image);
+        p.drawImage(target, leftDisplay);
         p.restore();
     }
 
-    if (!m_rightImage.image.isNull()) {
-        const QRectF target = imageTargetRect(m_rightImage.image);
+    if (!rightDisplay.isNull()) {
+        const QRectF target = imageTargetRect(rightDisplay);
         p.save();
         p.setClipRect(QRect(m_splitX, 0, width() - m_splitX, height()));
-        p.drawImage(target, m_rightImage.image);
+        p.drawImage(target, rightDisplay);
         p.restore();
     }
 
@@ -168,6 +174,18 @@ void CompareWidget::paintEvent(QPaintEvent*) {
                handleRect.center().x() - 4, handleRect.center().y() + 8);
     p.drawLine(handleRect.center().x() + 4, handleRect.center().y() - 8,
                handleRect.center().x() + 4, handleRect.center().y() + 8);
+
+    if (m_channelView != ChannelView::Color) {
+        const QString text = QString("Channel: %1 (Up/Down)").arg(channelViewLabel());
+        const int padding = 8;
+        const QRect textRect = p.fontMetrics().boundingRect(text);
+        const QRect panelRect(12, 12, textRect.width() + padding * 2, textRect.height() + padding * 2);
+        p.setBrush(QColor(0, 0, 0, 140));
+        p.setPen(Qt::NoPen);
+        p.drawRoundedRect(panelRect, 8, 8);
+        p.setPen(QColor(245, 245, 245, 230));
+        p.drawText(panelRect.adjusted(padding, padding, -padding, -padding), Qt::AlignLeft | Qt::AlignVCenter, text);
+    }
 
     int topOffset = 12;
     if (m_showPsnr && m_psnr.available) {
@@ -395,6 +413,17 @@ void CompareWidget::leaveEvent(QEvent* event) {
 }
 
 void CompareWidget::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Up) {
+        cycleChannelView(true);
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_Down) {
+        cycleChannelView(false);
+        event->accept();
+        return;
+    }
+
     if (!m_showPixelInfo || !m_cursorSample.valid) {
         QWidget::keyPressEvent(event);
         return;
@@ -725,5 +754,117 @@ void CompareWidget::moveCursorSampleBy(int dx, int dy) {
     m_cursorSample.anchorX = qBound(0, m_cursorSample.anchorX + dx, anchorImg.yuv.width - 1);
     m_cursorSample.anchorY = qBound(0, m_cursorSample.anchorY + dy, anchorImg.yuv.height - 1);
     rebuildCursorSampleFromAnchor();
+    update();
+}
+
+QImage CompareWidget::channelImage(const LoadedImage& image, ChannelView view) const {
+    if (view == ChannelView::Color || image.image.isNull()) {
+        return image.image;
+    }
+    if (!isValidYuv(image.yuv)) {
+        return image.image;
+    }
+
+    const int frameW = image.yuv.width;
+    const int frameH = image.yuv.height;
+    QImage gray(frameW, frameH, QImage::Format_Grayscale8);
+    if (gray.isNull()) {
+        return image.image;
+    }
+
+    const QByteArray* plane = &image.yuv.y;
+    int planeW = frameW;
+    int planeH = frameH;
+    if (view == ChannelView::U) {
+        plane = &image.yuv.u;
+        planeW = chromaWidth(image.yuv);
+        planeH = chromaHeight(image.yuv);
+    } else if (view == ChannelView::V) {
+        plane = &image.yuv.v;
+        planeW = chromaWidth(image.yuv);
+        planeH = chromaHeight(image.yuv);
+    }
+
+    for (int y = 0; y < frameH; ++y) {
+        uchar* row = gray.scanLine(y);
+        for (int x = 0; x < frameW; ++x) {
+            row[x] = static_cast<uchar>(samplePlaneMapped(*plane, planeW, planeH, frameW, frameH, x, y));
+        }
+    }
+    return gray;
+}
+
+void CompareWidget::invalidateChannelCache() {
+    m_channelCacheValid = false;
+    m_leftChannelCache = QImage();
+    m_rightChannelCache = QImage();
+}
+
+void CompareWidget::ensureChannelCache() {
+    if (m_channelView == ChannelView::Color) {
+        return;
+    }
+    if (m_channelCacheValid && m_cachedChannelView == m_channelView) {
+        return;
+    }
+    m_leftChannelCache = channelImage(m_leftImage, m_channelView);
+    m_rightChannelCache = channelImage(m_rightImage, m_channelView);
+    m_cachedChannelView = m_channelView;
+    m_channelCacheValid = true;
+}
+
+QString CompareWidget::channelViewLabel() const {
+    switch (m_channelView) {
+    case ChannelView::Y:
+        return "Y";
+    case ChannelView::U:
+        return "U";
+    case ChannelView::V:
+        return "V";
+    case ChannelView::Color:
+    default:
+        return "Color";
+    }
+}
+
+void CompareWidget::cycleChannelView(bool forward) {
+    if (forward) {
+        switch (m_channelView) {
+        case ChannelView::Color:
+            m_channelView = ChannelView::Y;
+            break;
+        case ChannelView::Y:
+            m_channelView = ChannelView::U;
+            break;
+        case ChannelView::U:
+            m_channelView = ChannelView::V;
+            break;
+        case ChannelView::V:
+            m_channelView = ChannelView::Color;
+            break;
+        default:
+            m_channelView = ChannelView::Y;
+            break;
+        }
+    } else {
+        switch (m_channelView) {
+        case ChannelView::Color:
+            m_channelView = ChannelView::V;
+            break;
+        case ChannelView::Y:
+            m_channelView = ChannelView::Color;
+            break;
+        case ChannelView::U:
+            m_channelView = ChannelView::Y;
+            break;
+        case ChannelView::V:
+            m_channelView = ChannelView::U;
+            break;
+        default:
+            m_channelView = ChannelView::V;
+            break;
+        }
+    }
+    invalidateChannelCache();
     update();
 }
