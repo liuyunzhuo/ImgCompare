@@ -175,6 +175,7 @@ void CompareWidget::paintEvent(QPaintEvent*) {
     p.drawLine(handleRect.center().x() + 4, handleRect.center().y() - 8,
                handleRect.center().x() + 4, handleRect.center().y() + 8);
 
+    int leftTopOffset = 12;
     if (m_channelView != ChannelView::Color) {
         const QString text = QString("Channel: %1 (Up/Down)").arg(channelViewLabel());
         const int padding = 8;
@@ -185,6 +186,27 @@ void CompareWidget::paintEvent(QPaintEvent*) {
         p.drawRoundedRect(panelRect, 8, 8);
         p.setPen(QColor(245, 245, 245, 230));
         p.drawText(panelRect.adjusted(padding, padding, -padding, -padding), Qt::AlignLeft | Qt::AlignVCenter, text);
+        leftTopOffset = panelRect.bottom() + 10;
+    }
+
+    const QString zoomText = zoomScaleText();
+    if (!zoomText.isEmpty()) {
+        const int padding = 8;
+        const QRect textRect = p.fontMetrics().boundingRect(
+            QRect(0, 0, width(), height()),
+            Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+            zoomText);
+        const QRect panelRect(12,
+                              leftTopOffset,
+                              textRect.width() + padding * 2,
+                              textRect.height() + padding * 2);
+        p.setBrush(QColor(0, 0, 0, 140));
+        p.setPen(Qt::NoPen);
+        p.drawRoundedRect(panelRect, 8, 8);
+        p.setPen(QColor(245, 245, 245, 230));
+        p.drawText(panelRect.adjusted(padding, padding, -padding, -padding),
+                   Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+                   zoomText);
     }
 
     int topOffset = 12;
@@ -825,6 +847,45 @@ QString CompareWidget::channelViewLabel() const {
     default:
         return "Color";
     }
+}
+
+double CompareWidget::effectiveScaleForImage(const QImage& image) const {
+    if (image.isNull() || width() <= 0 || height() <= 0 || image.width() <= 0 || image.height() <= 0) {
+        return 0.0;
+    }
+    const qreal fitScale = qMin(static_cast<qreal>(width()) / static_cast<qreal>(image.width()),
+                                static_cast<qreal>(height()) / static_cast<qreal>(image.height()));
+    if (fitScale <= 0.0) {
+        return 0.0;
+    }
+    return static_cast<double>(fitScale * m_zoom);
+}
+
+QString CompareWidget::zoomScaleText() const {
+    const auto formatScale = [](double scale) {
+        return QString("%1x (%2%)")
+            .arg(QString::number(scale, 'f', 2))
+            .arg(QString::number(scale * 100.0, 'f', 1));
+    };
+
+    const double leftScale = effectiveScaleForImage(m_leftImage.image);
+    const double rightScale = effectiveScaleForImage(m_rightImage.image);
+    const bool hasLeft = leftScale > 0.0;
+    const bool hasRight = rightScale > 0.0;
+
+    if (!hasLeft && !hasRight) {
+        return QString();
+    }
+    if (hasLeft && hasRight) {
+        if (qAbs(leftScale - rightScale) < 0.001) {
+            return QString("Zoom: %1\n(1.00x = Original)").arg(formatScale((leftScale + rightScale) * 0.5));
+        }
+        return QString("Zoom L: %1\nZoom R: %2\n(1.00x = Original)")
+            .arg(formatScale(leftScale))
+            .arg(formatScale(rightScale));
+    }
+    const double scale = hasLeft ? leftScale : rightScale;
+    return QString("Zoom: %1\n(1.00x = Original)").arg(formatScale(scale));
 }
 
 void CompareWidget::cycleChannelView(bool forward) {

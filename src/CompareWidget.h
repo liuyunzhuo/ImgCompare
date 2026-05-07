@@ -99,6 +99,8 @@ private:
     void invalidateChannelCache();
     void ensureChannelCache();
     QString channelViewLabel() const;
+    double effectiveScaleForImage(const QImage& image) const;
+    QString zoomScaleText() const;
     void cycleChannelView(bool forward);
 
     LoadedImage m_leftImage;
