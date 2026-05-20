@@ -1,10 +1,13 @@
 #include "MainWindow.h"
 
 #include <QAction>
+#include <QApplication>
+#include <QClipboard>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QMenuBar>
@@ -334,6 +337,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     toolRow->setContentsMargins(0, 0, 0, 0);
     toolRow->setSpacing(12);
 
+    auto* modeGroup = new QWidget(m_controlPanel);
+    auto* modeForm = new QFormLayout(modeGroup);
+    m_modeCombo = new QComboBox(modeGroup);
+    m_modeCombo->addItem("Split Compare");
+    m_modeCombo->addItem("Multi Compare");
+    modeForm->addRow("Mode", m_modeCombo);
+
     auto* leftGroup = new QWidget(m_controlPanel);
     auto* leftForm = new QFormLayout(leftGroup);
     auto* leftLoadBtn = new QPushButton("Load Left", leftGroup);
@@ -360,18 +370,39 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     rightForm->addRow("Width", m_rightW);
     rightForm->addRow("Height", m_rightH);
 
+    auto* multiGroup = new QWidget(m_controlPanel);
+    auto* multiForm = new QFormLayout(multiGroup);
+    auto* multiLoadBtn = new QPushButton("Load Multi", multiGroup);
+    auto* multiClearBtn = new QPushButton("Clear Multi", multiGroup);
+    auto* multiCopyBtn = new QPushButton("Copy Multi", multiGroup);
+    m_multiFormat = createFormatCombo(multiGroup);
+    m_multiW = createSizeSpin(multiGroup);
+    m_multiH = createSizeSpin(multiGroup);
+    multiForm->addRow(multiLoadBtn);
+    multiForm->addRow(multiClearBtn);
+    multiForm->addRow(multiCopyBtn);
+    multiForm->addRow("Format", m_multiFormat);
+    multiForm->addRow("Width", m_multiW);
+    multiForm->addRow("Height", m_multiH);
+
     auto* fullscreenBtn = new QPushButton("Fullscreen (F11)", m_controlPanel);
     fullscreenBtn->setMinimumHeight(36);
 
+    toolRow->addWidget(modeGroup);
     toolRow->addWidget(leftGroup);
     toolRow->addWidget(rightGroup);
+    toolRow->addWidget(multiGroup);
     toolRow->addStretch();
     toolRow->addWidget(fullscreenBtn);
 
     m_compareWidget = new CompareWidget(central);
+    m_multiCompareWidget = new MultiCompareWidget(central);
+    m_viewStack = new QStackedWidget(central);
+    m_viewStack->addWidget(m_compareWidget);
+    m_viewStack->addWidget(m_multiCompareWidget);
 
     m_rootLayout->addWidget(m_controlPanel);
-    m_rootLayout->addWidget(m_compareWidget, 1);
+    m_rootLayout->addWidget(m_viewStack, 1);
     setCentralWidget(central);
 
     auto* viewMenu = menuBar()->addMenu("View");
@@ -388,12 +419,35 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(m_showPixelInfoAction, &QAction::toggled, m_compareWidget, &CompareWidget::setShowPixelInfo);
     connect(m_showPixelDiffAction, &QAction::toggled, m_compareWidget, &CompareWidget::setShowPixelDiff);
     connect(m_showPsnrAction, &QAction::toggled, m_compareWidget, &CompareWidget::setShowPsnr);
+    connect(m_multiCompareWidget, &MultiCompareWidget::itemLabelEdited, this, [this](int index, const QString& label) {
+        if (index >= 0 && index < m_multiItems.size()) {
+            m_multiItems[index].label = label;
+        }
+    });
+    connect(m_multiCompareWidget, &MultiCompareWidget::itemRemoveRequested, this, [this](int index) {
+        if (index < 0 || index >= m_multiItems.size()) {
+            return;
+        }
+        m_multiItems.removeAt(index);
+        m_multiCompareWidget->setItems(m_multiItems);
+    });
 
     connect(leftLoadBtn, &QPushButton::clicked, this, &MainWindow::loadLeftImage);
     connect(leftSaveBtn, &QPushButton::clicked, this, &MainWindow::saveLeftImage);
     connect(rightLoadBtn, &QPushButton::clicked, this, &MainWindow::loadRightImage);
     connect(rightSaveBtn, &QPushButton::clicked, this, &MainWindow::saveRightImage);
+    connect(multiLoadBtn, &QPushButton::clicked, this, &MainWindow::loadMultiImages);
+    connect(multiClearBtn, &QPushButton::clicked, this, &MainWindow::clearMultiImages);
+    connect(multiCopyBtn, &QPushButton::clicked, this, &MainWindow::copyMultiComparisonToClipboard);
     connect(fullscreenBtn, &QPushButton::clicked, this, &MainWindow::toggleFullscreen);
+    const auto applyModeUi = [this, leftGroup, rightGroup, multiGroup](int index) {
+        const bool splitMode = index == 0;
+        leftGroup->setVisible(splitMode);
+        rightGroup->setVisible(splitMode);
+        multiGroup->setVisible(!splitMode);
+        m_viewStack->setCurrentIndex(splitMode ? 0 : 1);
+    };
+    connect(m_modeCombo, &QComboBox::currentIndexChanged, this, applyModeUi);
 
     auto* f11 = new QShortcut(QKeySequence(Qt::Key_F11), this);
     connect(f11, &QShortcut::activated, this, &MainWindow::toggleFullscreen);
@@ -422,11 +476,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                            || rightFmt == PixelFormat::NV16;
         m_rightW->setEnabled(rightYuv);
         m_rightH->setEnabled(rightYuv);
+
+        const auto multiFmt = comboToFormat(m_multiFormat);
+        const bool multiYuv = multiFmt == PixelFormat::YUV420P
+                           || multiFmt == PixelFormat::YUV444P
+                           || multiFmt == PixelFormat::NV12
+                           || multiFmt == PixelFormat::NV16;
+        m_multiW->setEnabled(multiYuv);
+        m_multiH->setEnabled(multiYuv);
     };
 
     connect(m_leftFormat, &QComboBox::currentIndexChanged, this, refreshSizeInputState);
     connect(m_rightFormat, &QComboBox::currentIndexChanged, this, refreshSizeInputState);
+    connect(m_multiFormat, &QComboBox::currentIndexChanged, this, refreshSizeInputState);
     refreshSizeInputState();
+    m_modeCombo->setCurrentIndex(0);
+    applyModeUi(m_modeCombo->currentIndex());
 }
 
 PixelFormat MainWindow::comboToFormat(const QComboBox* combo) {
@@ -447,6 +512,61 @@ ImageSource MainWindow::collectSource(bool left) const {
         src.height = m_rightH->value();
     }
     return src;
+}
+
+bool MainWindow::loadMultiItemFromPath(const QString& path, MultiCompareWidget::Item& outItem, QString& err) const {
+    if (path.isEmpty()) {
+        err = "Empty path.";
+        return false;
+    }
+
+    ImageSource src;
+    src.path = path;
+
+    const PixelFormat globalFmt = comboToFormat(m_multiFormat);
+    if (globalFmt == PixelFormat::Auto) {
+        src.format = PixelFormat::Auto;
+        int w = 0;
+        int h = 0;
+        if (parseResolutionFromFileName(path, w, h)) {
+            src.width = w;
+            src.height = h;
+        }
+    } else {
+        // Keep the manual override as a fallback for raw YUV workflows,
+        // but still allow regular image files in the same batch.
+        const QString ext = QFileInfo(path).suffix().toLower();
+        if (ext == "png" || ext == "jpg" || ext == "jpeg") {
+            src.format = PixelFormat::Auto;
+        } else {
+            src.format = globalFmt;
+            src.width = m_multiW->value();
+            src.height = m_multiH->value();
+        }
+    }
+
+    LoadedImage img;
+    if (!ImageLoader::load(src, img, err)) {
+        return false;
+    }
+
+    outItem.label = QFileInfo(path).fileName();
+    outItem.image = img;
+    return true;
+}
+
+QVector<MultiCompareWidget::Item> MainWindow::loadMultiItemsFromPaths(const QStringList& paths, QStringList& failed) const {
+    QVector<MultiCompareWidget::Item> items;
+    for (const QString& path : paths) {
+        MultiCompareWidget::Item item;
+        QString err;
+        if (!loadMultiItemFromPath(path, item, err)) {
+            failed.push_back(QString("%1: %2").arg(QFileInfo(path).fileName(), err));
+            continue;
+        }
+        items.push_back(item);
+    }
+    return items;
 }
 
 void MainWindow::loadLeftImage() {
@@ -471,6 +591,30 @@ void MainWindow::loadRightImage() {
         return;
     }
     loadImageFromPath(path, false);
+}
+
+void MainWindow::loadMultiImages() {
+    QStringList paths = QFileDialog::getOpenFileNames(
+        this,
+        "Select Images",
+        QString(),
+        "Images (*.png *.jpg *.jpeg *.yuv *.nv12 *.nv16 *.i420);;All Files (*.*)");
+    if (paths.isEmpty()) {
+        return;
+    }
+
+    QStringList failed;
+    QVector<MultiCompareWidget::Item> items = loadMultiItemsFromPaths(paths, failed);
+
+    m_multiItems = items;
+    m_multiCompareWidget->setItems(m_multiItems);
+    if (!m_multiItems.isEmpty()) {
+        m_modeCombo->setCurrentIndex(1);
+    }
+
+    if (!failed.isEmpty()) {
+        QMessageBox::warning(this, "Some Images Failed", failed.join('\n'));
+    }
 }
 
 void MainWindow::saveLeftImage() {
@@ -509,6 +653,29 @@ void MainWindow::saveRightImage() {
     }
     const QString path = ensureSaveExtension(rawPath, selectedFilter);
     saveImageToPath(path, false);
+}
+
+void MainWindow::clearMultiImages() {
+    m_multiItems.clear();
+    m_multiCompareWidget->clearItems();
+}
+
+void MainWindow::copyMultiComparisonToClipboard() {
+    if (!m_multiCompareWidget->hasItems()) {
+        QMessageBox::information(this, "Copy Multi", "No multi-image comparison to copy.");
+        return;
+    }
+
+    const qreal dpr = devicePixelRatioF();
+    const QImage image = m_multiCompareWidget->renderComparisonImage(dpr);
+    if (image.isNull()) {
+        QMessageBox::warning(this, "Copy Multi Failed", "Failed to render comparison image.");
+        return;
+    }
+
+    QClipboard* clipboard = QApplication::clipboard();
+    clipboard->setImage(image);
+    QMessageBox::information(this, "Copy Multi", "Comparison image copied to clipboard.");
 }
 
 void MainWindow::toggleFullscreen() {
@@ -667,13 +834,36 @@ void MainWindow::dropEvent(QDropEvent* event) {
     }
 
     if (files.size() >= 2) {
-        loadImageFromPath(files.at(0), true);
-        loadImageFromPath(files.at(1), false);
+        if (m_modeCombo && m_modeCombo->currentIndex() == 1) {
+            QStringList failed;
+            QVector<MultiCompareWidget::Item> items = loadMultiItemsFromPaths(files, failed);
+            m_multiItems = items;
+            m_multiCompareWidget->setItems(m_multiItems);
+            if (!failed.isEmpty()) {
+                QMessageBox::warning(this, "Some Images Failed", failed.join('\n'));
+            }
+        } else {
+            loadImageFromPath(files.at(0), true);
+            loadImageFromPath(files.at(1), false);
+        }
     } else {
         const QPoint globalDropPos = mapToGlobal(event->position().toPoint());
-        const QPoint dropPosInCompare = m_compareWidget->mapFromGlobal(globalDropPos);
-        const bool toLeft = m_compareWidget->isLeftSideAt(dropPosInCompare);
-        loadImageFromPath(files.first(), toLeft);
+        if (m_modeCombo && m_modeCombo->currentIndex() == 1) {
+            QVector<MultiCompareWidget::Item> items = m_multiItems;
+            MultiCompareWidget::Item item;
+            QString err;
+            if (loadMultiItemFromPath(files.first(), item, err)) {
+                items.push_back(item);
+                m_multiItems = items;
+                m_multiCompareWidget->setItems(m_multiItems);
+            } else {
+                QMessageBox::warning(this, "Load Multi Failed", err);
+            }
+        } else {
+            const QPoint dropPosInCompare = m_compareWidget->mapFromGlobal(globalDropPos);
+            const bool toLeft = m_compareWidget->isLeftSideAt(dropPosInCompare);
+            loadImageFromPath(files.first(), toLeft);
+        }
     }
 
     event->acceptProposedAction();

@@ -13,6 +13,8 @@ set(APP_SOURCES
     src/MainWindow.cpp
     src/CompareWidget.h
     src/CompareWidget.cpp
+    src/MultiCompareWidget.h
+    src/MultiCompareWidget.cpp
     src/ImageLoader.h
     src/ImageLoader.cpp
 )
