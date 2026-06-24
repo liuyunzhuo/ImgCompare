@@ -41,7 +41,22 @@ struct LoadedImage {
     YuvPlanes yuv;
 };
 
+struct RgbPixel {
+    int r = 0;
+    int g = 0;
+    int b = 0;
+};
+
+struct YuvPixel {
+    int y = 0;
+    int u = 0;
+    int v = 0;
+};
+
 class ImageLoader {
 public:
     static bool load(const ImageSource& src, LoadedImage& out, QString& err);
 };
+
+RgbPixel yuvToRgbBt702(int y, int u, int v);
+YuvPixel rgbToYuvBt702(int r, int g, int b);

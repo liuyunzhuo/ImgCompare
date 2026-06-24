@@ -50,6 +50,25 @@ inline int samplePlaneMapped(const QByteArray& plane,
     const int idx = sy * planeW + sx;
     return static_cast<int>(static_cast<unsigned char>(plane[idx]));
 }
+
+inline bool isRgbSource(PixelFormat fmt) {
+    return fmt == PixelFormat::PngJpg;
+}
+
+inline RgbPixel sampleRgbPixel(const LoadedImage& image, int x, int y, int yVal, int uVal, int vVal) {
+    if (isRgbSource(image.format) && !image.image.isNull()) {
+        const int sx = qBound(0, x, image.image.width() - 1);
+        const int sy = qBound(0, y, image.image.height() - 1);
+        const uchar* row = image.image.constScanLine(sy);
+        const int base = sx * 3;
+        return RgbPixel{
+            static_cast<int>(row[base]),
+            static_cast<int>(row[base + 1]),
+            static_cast<int>(row[base + 2])
+        };
+    }
+    return yuvToRgbBt702(yVal, uVal, vVal);
+}
 } // namespace
 
 CompareWidget::CompareWidget(QWidget* parent) : QWidget(parent) {
@@ -100,6 +119,22 @@ void CompareWidget::setShowPixelDiff(bool enabled) {
         return;
     }
     m_showPixelDiff = enabled;
+    update();
+}
+
+void CompareWidget::setShowYuvValues(bool enabled) {
+    if (m_showYuvValues == enabled) {
+        return;
+    }
+    m_showYuvValues = enabled;
+    update();
+}
+
+void CompareWidget::setShowRgbValues(bool enabled) {
+    if (m_showRgbValues == enabled) {
+        return;
+    }
+    m_showRgbValues = enabled;
     update();
 }
 
@@ -255,30 +290,52 @@ void CompareWidget::paintEvent(QPaintEvent*) {
                            .arg(m_cursorSample.anchorX)
                            .arg(m_cursorSample.anchorY);
         if (m_cursorSample.leftValid) {
-            text += QString("\nL (%1, %2)  Y:%3 U:%4 V:%5")
-                        .arg(m_cursorSample.leftX)
-                        .arg(m_cursorSample.leftY)
-                        .arg(m_cursorSample.leftYVal)
-                        .arg(m_cursorSample.leftUVal)
-                        .arg(m_cursorSample.leftVVal);
+            text += QString("\nL (%1, %2)").arg(m_cursorSample.leftX).arg(m_cursorSample.leftY);
+            if (m_showYuvValues) {
+                text += QString("  Y:%1 U:%2 V:%3")
+                            .arg(m_cursorSample.leftYVal)
+                            .arg(m_cursorSample.leftUVal)
+                            .arg(m_cursorSample.leftVVal);
+            }
+            if (m_showRgbValues) {
+                text += QString("  R:%1 G:%2 B:%3")
+                            .arg(m_cursorSample.leftRVal)
+                            .arg(m_cursorSample.leftGVal)
+                            .arg(m_cursorSample.leftBVal);
+            }
         } else {
             text += "\nL: N/A";
         }
         if (m_cursorSample.rightValid) {
-            text += QString("\nR (%1, %2)  Y:%3 U:%4 V:%5")
-                        .arg(m_cursorSample.rightX)
-                        .arg(m_cursorSample.rightY)
-                        .arg(m_cursorSample.rightYVal)
-                        .arg(m_cursorSample.rightUVal)
-                        .arg(m_cursorSample.rightVVal);
+            text += QString("\nR (%1, %2)").arg(m_cursorSample.rightX).arg(m_cursorSample.rightY);
+            if (m_showYuvValues) {
+                text += QString("  Y:%1 U:%2 V:%3")
+                            .arg(m_cursorSample.rightYVal)
+                            .arg(m_cursorSample.rightUVal)
+                            .arg(m_cursorSample.rightVVal);
+            }
+            if (m_showRgbValues) {
+                text += QString("  R:%1 G:%2 B:%3")
+                            .arg(m_cursorSample.rightRVal)
+                            .arg(m_cursorSample.rightGVal)
+                            .arg(m_cursorSample.rightBVal);
+            }
         } else {
             text += "\nR: N/A";
         }
         if (m_showPixelDiff && m_cursorSample.leftValid && m_cursorSample.rightValid) {
-            text += QString("\nDiff(YUV): dY=%1 dU=%2 dV=%3")
-                        .arg(m_cursorSample.leftYVal - m_cursorSample.rightYVal)
-                        .arg(m_cursorSample.leftUVal - m_cursorSample.rightUVal)
-                        .arg(m_cursorSample.leftVVal - m_cursorSample.rightVVal);
+            if (m_showYuvValues) {
+                text += QString("\nDiff(YUV): dY=%1 dU=%2 dV=%3")
+                            .arg(m_cursorSample.leftYVal - m_cursorSample.rightYVal)
+                            .arg(m_cursorSample.leftUVal - m_cursorSample.rightUVal)
+                            .arg(m_cursorSample.leftVVal - m_cursorSample.rightVVal);
+            }
+            if (m_showRgbValues) {
+                text += QString("\nDiff(RGB): dR=%1 dG=%2 dB=%3")
+                            .arg(m_cursorSample.leftRVal - m_cursorSample.rightRVal)
+                            .arg(m_cursorSample.leftGVal - m_cursorSample.rightGVal)
+                            .arg(m_cursorSample.leftBVal - m_cursorSample.rightBVal);
+            }
         }
 
         const int padding = 10;
@@ -703,22 +760,32 @@ bool CompareWidget::sampleAtImagePos(const LoadedImage& image, int x, int y, boo
     const int cx = image.yuv.subsampling == ChromaSubsampling::Cs444 ? x : (x / 2);
     const int cy = image.yuv.subsampling == ChromaSubsampling::Cs420 ? (y / 2) : y;
     const int cIdx = qBound(0, cy * cW + cx, cW * cH - 1);
+    const int yVal = static_cast<int>(static_cast<unsigned char>(image.yuv.y[yIdx]));
+    const int uVal = static_cast<int>(static_cast<unsigned char>(image.yuv.u[cIdx]));
+    const int vVal = static_cast<int>(static_cast<unsigned char>(image.yuv.v[cIdx]));
+    const RgbPixel rgb = sampleRgbPixel(image, x, y, yVal, uVal, vVal);
 
     out.valid = true;
     if (leftSide) {
         out.leftValid = true;
         out.leftX = x;
         out.leftY = y;
-        out.leftYVal = static_cast<int>(static_cast<unsigned char>(image.yuv.y[yIdx]));
-        out.leftUVal = static_cast<int>(static_cast<unsigned char>(image.yuv.u[cIdx]));
-        out.leftVVal = static_cast<int>(static_cast<unsigned char>(image.yuv.v[cIdx]));
+        out.leftYVal = yVal;
+        out.leftUVal = uVal;
+        out.leftVVal = vVal;
+        out.leftRVal = rgb.r;
+        out.leftGVal = rgb.g;
+        out.leftBVal = rgb.b;
     } else {
         out.rightValid = true;
         out.rightX = x;
         out.rightY = y;
-        out.rightYVal = static_cast<int>(static_cast<unsigned char>(image.yuv.y[yIdx]));
-        out.rightUVal = static_cast<int>(static_cast<unsigned char>(image.yuv.u[cIdx]));
-        out.rightVVal = static_cast<int>(static_cast<unsigned char>(image.yuv.v[cIdx]));
+        out.rightYVal = yVal;
+        out.rightUVal = uVal;
+        out.rightVVal = vVal;
+        out.rightRVal = rgb.r;
+        out.rightGVal = rgb.g;
+        out.rightBVal = rgb.b;
     }
     return true;
 }

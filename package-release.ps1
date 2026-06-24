@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.0",
+    [string]$Version = "0.2.1",
     [string]$BuildDir = "build-mingw",
     [string]$QtDir = "C:\Qt\6.10.2\mingw_64",
     [string]$OutDir = "dist",

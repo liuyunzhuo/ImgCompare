@@ -22,6 +22,8 @@ public:
     void setShowPixelInfo(bool enabled);
     void setShowPsnr(bool enabled);
     void setShowPixelDiff(bool enabled);
+    void setShowYuvValues(bool enabled);
+    void setShowRgbValues(bool enabled);
     bool isLeftSideAt(const QPoint& pos) const;
 
 protected:
@@ -74,6 +76,9 @@ private:
         int leftYVal = 0;
         int leftUVal = 0;
         int leftVVal = 0;
+        int leftRVal = 0;
+        int leftGVal = 0;
+        int leftBVal = 0;
 
         bool rightValid = false;
         int rightX = 0;
@@ -81,6 +86,9 @@ private:
         int rightYVal = 0;
         int rightUVal = 0;
         int rightVVal = 0;
+        int rightRVal = 0;
+        int rightGVal = 0;
+        int rightBVal = 0;
     };
 
     QRectF imageTargetRect(const QImage& image) const;
@@ -111,6 +119,8 @@ private:
     bool m_showPixelInfo = true;
     bool m_showPsnr = true;
     bool m_showPixelDiff = true;
+    bool m_showYuvValues = true;
+    bool m_showRgbValues = false;
     bool m_dragging = false;
     bool m_panning = false;
     QPoint m_lastPanPos;

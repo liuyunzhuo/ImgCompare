@@ -10,27 +10,34 @@ int clampToByte(int v) {
     return qBound(0, v, 255);
 }
 
-QRgb yuvToRgb(int y, int u, int v) {
+} // namespace
+
+RgbPixel yuvToRgbBt702(int y, int u, int v) {
     // Inverse of rgbToYuvBt702() in full-range BT.702/709-style transform.
     const double yd = static_cast<double>(y);
     const double ud = static_cast<double>(u) - 128.0;
     const double vd = static_cast<double>(v) - 128.0;
 
-    const int r = qRound(yd + 1.574800 * vd);
-    const int g = qRound(yd - 0.187324 * ud - 0.468124 * vd);
-    const int b = qRound(yd + 1.855600 * ud);
-    return qRgb(clampToByte(r), clampToByte(g), clampToByte(b));
+    RgbPixel rgb;
+    rgb.r = clampToByte(qRound(yd + 1.574800 * vd));
+    rgb.g = clampToByte(qRound(yd - 0.187324 * ud - 0.468124 * vd));
+    rgb.b = clampToByte(qRound(yd + 1.855600 * ud));
+    return rgb;
 }
 
-void rgbToYuvBt702(int r, int g, int b, int& y, int& u, int& v) {
+YuvPixel rgbToYuvBt702(int r, int g, int b) {
     const double yd = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     const double ud = -0.114572 * r - 0.385428 * g + 0.500000 * b + 128.0;
     const double vd = 0.500000 * r - 0.454153 * g - 0.045847 * b + 128.0;
-    y = clampToByte(qRound(yd));
-    u = clampToByte(qRound(ud));
-    v = clampToByte(qRound(vd));
+
+    YuvPixel yuv;
+    yuv.y = clampToByte(qRound(yd));
+    yuv.u = clampToByte(qRound(ud));
+    yuv.v = clampToByte(qRound(vd));
+    return yuv;
 }
 
+namespace {
 PixelFormat detectFormat(const ImageSource& src) {
     if (src.format != PixelFormat::Auto) {
         return src.format;
@@ -114,10 +121,10 @@ bool buildDisplayImageFromYuv(const YuvPlanes& yuv, QImage& outImage, QString& e
             const int cx = yuv.subsampling == ChromaSubsampling::Cs444 ? i : (i / 2);
             const int cy = yuv.subsampling == ChromaSubsampling::Cs420 ? (j / 2) : j;
             const int cIdx = cy * cW + cx;
-            const QRgb rgb = yuvToRgb(yPlane[yIdx], uPlane[cIdx], vPlane[cIdx]);
-            dst[i * 3 + 0] = qRed(rgb);
-            dst[i * 3 + 1] = qGreen(rgb);
-            dst[i * 3 + 2] = qBlue(rgb);
+            const RgbPixel rgb = yuvToRgbBt702(yPlane[yIdx], uPlane[cIdx], vPlane[cIdx]);
+            dst[i * 3 + 0] = static_cast<uchar>(rgb.r);
+            dst[i * 3 + 1] = static_cast<uchar>(rgb.g);
+            dst[i * 3 + 2] = static_cast<uchar>(rgb.b);
         }
     }
     return true;
@@ -268,13 +275,10 @@ bool loadRgbAndConvertToBt702Yuv(const QString& path, LoadedImage& out, QString&
         for (int i = 0; i < out.image.width(); ++i) {
             const int idx = j * out.image.width() + i;
             const int base = i * 3;
-            int y = 0;
-            int u = 0;
-            int v = 0;
-            rgbToYuvBt702(row[base], row[base + 1], row[base + 2], y, u, v);
-            yPlane[idx] = static_cast<uchar>(y);
-            uPlane[idx] = static_cast<uchar>(u);
-            vPlane[idx] = static_cast<uchar>(v);
+            const YuvPixel yuv = rgbToYuvBt702(row[base], row[base + 1], row[base + 2]);
+            yPlane[idx] = static_cast<uchar>(yuv.y);
+            uPlane[idx] = static_cast<uchar>(yuv.u);
+            vPlane[idx] = static_cast<uchar>(yuv.v);
         }
     }
 

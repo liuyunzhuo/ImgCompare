@@ -61,6 +61,8 @@ private:
     QAction* m_showPixelInfoAction = nullptr;
     QAction* m_showPixelDiffAction = nullptr;
     QAction* m_showPsnrAction = nullptr;
+    QAction* m_showYuvValuesAction = nullptr;
+    QAction* m_showRgbValuesAction = nullptr;
     LoadedImage m_leftImageData;
     LoadedImage m_rightImageData;
     QVector<MultiCompareWidget::Item> m_multiItems;

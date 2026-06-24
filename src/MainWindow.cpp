@@ -412,12 +412,20 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_showPixelDiffAction = viewMenu->addAction("Show Pixel Diff");
     m_showPixelDiffAction->setCheckable(true);
     m_showPixelDiffAction->setChecked(true);
+    m_showYuvValuesAction = viewMenu->addAction("Show YUV Values");
+    m_showYuvValuesAction->setCheckable(true);
+    m_showYuvValuesAction->setChecked(true);
+    m_showRgbValuesAction = viewMenu->addAction("Show RGB Values");
+    m_showRgbValuesAction->setCheckable(true);
+    m_showRgbValuesAction->setChecked(false);
     m_showPsnrAction = viewMenu->addAction("Show PSNR");
     m_showPsnrAction->setCheckable(true);
     m_showPsnrAction->setChecked(true);
 
     connect(m_showPixelInfoAction, &QAction::toggled, m_compareWidget, &CompareWidget::setShowPixelInfo);
     connect(m_showPixelDiffAction, &QAction::toggled, m_compareWidget, &CompareWidget::setShowPixelDiff);
+    connect(m_showYuvValuesAction, &QAction::toggled, m_compareWidget, &CompareWidget::setShowYuvValues);
+    connect(m_showRgbValuesAction, &QAction::toggled, m_compareWidget, &CompareWidget::setShowRgbValues);
     connect(m_showPsnrAction, &QAction::toggled, m_compareWidget, &CompareWidget::setShowPsnr);
     connect(m_multiCompareWidget, &MultiCompareWidget::itemLabelEdited, this, [this](int index, const QString& label) {
         if (index >= 0 && index < m_multiItems.size()) {
